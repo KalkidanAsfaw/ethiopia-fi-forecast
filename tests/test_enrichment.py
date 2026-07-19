@@ -1,7 +1,27 @@
 import pandas as pd
+import pytest
 
+from src.data_loader import load_reference_codes, load_unified_data
 from src.enrichment import NEW_EVENTS, NEW_IMPACT_LINKS, NEW_OBSERVATIONS, build_enriched
 from src.schema import validate_records
+
+
+def test_loader_raises_on_missing_file():
+    with pytest.raises(FileNotFoundError, match="data/raw"):
+        load_unified_data("data/raw/does_not_exist.csv")
+
+
+def test_loader_raises_on_wrong_columns(tmp_path):
+    bad = tmp_path / "bad.csv"
+    pd.DataFrame({"foo": [1]}).to_csv(bad, index=False)
+    with pytest.raises(ValueError, match="missing required"):
+        load_unified_data(bad)
+
+
+def test_reference_codes_load():
+    ref = load_reference_codes()
+    assert {"field", "code"} <= set(ref.columns)
+    assert len(ref) > 50
 
 
 def test_addition_ids_are_unique():

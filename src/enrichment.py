@@ -201,7 +201,17 @@ NEW_IMPACT_LINKS = [
 
 
 def load_raw():
-    """Load the two raw sheets from the starter xlsx."""
+    """Load the two raw sheets from the starter xlsx.
+
+    Raises ``FileNotFoundError`` with guidance if the starter workbook is
+    missing, so notebook users get an actionable message instead of a
+    pandas stack trace.
+    """
+    if not RAW_XLSX.exists():
+        raise FileNotFoundError(
+            f"Starter dataset not found at {RAW_XLSX}. "
+            "Download ethiopia_fi_unified_data.xlsx into data/raw/ first."
+        )
     main = pd.read_excel(RAW_XLSX, sheet_name="ethiopia_fi_unified_data")
     impact = pd.read_excel(RAW_XLSX, sheet_name="Impact_sheet")
     return main, impact
@@ -210,7 +220,9 @@ def load_raw():
 def build_enriched(write=True):
     """Append enrichment records to the raw data; optionally write processed CSVs.
 
-    Returns (main_enriched, impact_enriched).
+    Returns (main_enriched, impact_enriched). Raises ``ValueError`` if the
+    combined data would violate schema integrity (duplicate IDs, orphan
+    impact links, or events with a pillar assigned).
     """
     main, impact = load_raw()
 
@@ -223,11 +235,26 @@ def build_enriched(write=True):
     for df in (main_out, impact_out):
         df["observation_date"] = pd.to_datetime(df["observation_date"], errors="coerce")
 
-    assert main_out["record_id"].is_unique, "duplicate record_id in main sheet"
-    assert impact_out["record_id"].is_unique, "duplicate record_id in impact sheet"
+    problems = []
+    if not main_out["record_id"].is_unique:
+        dupes = main_out.record_id[main_out.record_id.duplicated()].tolist()
+        problems.append(f"duplicate record_id in main sheet: {dupes}")
+    if not impact_out["record_id"].is_unique:
+        dupes = impact_out.record_id[impact_out.record_id.duplicated()].tolist()
+        problems.append(f"duplicate record_id in impact sheet: {dupes}")
     event_ids = set(main_out.loc[main_out.record_type == "event", "record_id"])
     orphans = set(impact_out["parent_id"]) - event_ids
-    assert not orphans, f"impact links reference unknown events: {orphans}"
+    if orphans:
+        problems.append(f"impact links reference unknown events: {sorted(orphans)}")
+    events_with_pillar = main_out[
+        (main_out.record_type == "event") & main_out["pillar"].notna()
+    ]
+    if len(events_with_pillar):
+        problems.append(
+            f"events must not carry a pillar: {events_with_pillar.record_id.tolist()}"
+        )
+    if problems:
+        raise ValueError("Enrichment integrity check failed: " + "; ".join(problems))
 
     if write:
         PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
