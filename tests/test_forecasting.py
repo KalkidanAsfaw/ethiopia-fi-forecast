@@ -2,12 +2,14 @@ import numpy as np
 import pandas as pd
 
 from src.forecasting import (
+    FORECAST_CONFIG,
     apply_scenario,
     event_augmented_forecast,
     fit_trend,
     forecast_trend,
     residual_background_rate,
     scenario_forecasts,
+    standard_scenario_forecast,
 )
 
 FINDEX_YEARS = [2011, 2014, 2017, 2021, 2024]
@@ -94,3 +96,58 @@ def test_scenario_forecasts_orders_pessimistic_base_optimistic():
     )
     row = df.iloc[0]
     assert row["pessimistic"] <= row["base"] <= row["optimistic"]
+
+
+def _sample_links_for_standard_forecast():
+    return pd.DataFrame({
+        "record_id": ["IMP_A", "IMP_B"],
+        "parent_id": ["EVT_A", "EVT_B"],
+        "related_indicator": ["ACC_OWNERSHIP", "ACC_OWNERSHIP"],
+        "relationship_type": ["direct", "enabling"],
+        "impact_direction": ["increase", "increase"],
+        "impact_magnitude": ["high", "medium"],
+        "impact_estimate": [15.0, 10.0],
+        "lag_months": [12, 24],
+        "event_record_id": ["EVT_A", "EVT_B"],
+        "event_observation_date": pd.to_datetime(["2021-05-17", "2024-01-01"]),
+    })
+
+
+def test_standard_scenario_forecast_enabling_upside_matches_notebook_shape():
+    links = _sample_links_for_standard_forecast()
+    config = {
+        "ACC_OWNERSHIP": {
+            "last_date": "2024-11-29", "last_value": 49.0,
+            "calibration": 0.25, "background_pp_per_year": -0.26,
+            "strategy": "enabling_upside", "optimistic_enabling_calibration": 0.15,
+        },
+    }
+    df = standard_scenario_forecast(
+        "ACC_OWNERSHIP", links, ["2025-12-31", "2026-12-31", "2027-12-31"], config=config
+    )
+    # only the validated direct link (already matured) drives pessimistic/base -> flat
+    assert (df["pessimistic"] == df["pessimistic"].iloc[0]).all()
+    assert (df["base"] == df["pessimistic"]).all()
+    # the enabling link only benefits the optimistic case
+    assert (df["optimistic"] >= df["base"]).all()
+    assert df["optimistic"].iloc[-1] > df["optimistic"].iloc[0]
+
+
+def test_standard_scenario_forecast_symmetric_orders_scenarios():
+    links = _sample_links_for_standard_forecast()
+    config = {
+        "ACC_OWNERSHIP": {
+            "last_date": "2024-11-29", "last_value": 49.0,
+            "calibration": 0.5, "background_pp_per_year": 0.5,
+            "strategy": "symmetric",
+        },
+    }
+    df = standard_scenario_forecast(
+        "ACC_OWNERSHIP", links, ["2026-12-31"], config=config
+    )
+    row = df.iloc[0]
+    assert row["pessimistic"] <= row["base"] <= row["optimistic"]
+
+
+def test_forecast_config_has_both_targets():
+    assert set(FORECAST_CONFIG) == {"ACC_OWNERSHIP", "USG_DIGITAL_PAYMENT"}
