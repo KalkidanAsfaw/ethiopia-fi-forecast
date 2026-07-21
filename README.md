@@ -61,6 +61,20 @@ Place the starter dataset files in `data/raw/`:
 streamlit run dashboard/app.py
 ```
 
+Opens at `http://localhost:8501`. Four pages, all backed by `src/dashboard_data.py`,
+`src/event_impact.py`, and `src/forecasting.py` so the numbers always match the notebooks:
+
+- **Overview** — key metric cards (latest Access/Usage/Mobile Money values with deltas), the
+  P2P/ATM crossover chart, and a growth-rate-by-period chart for a selected indicator.
+- **Trends** — multi-indicator time series with a date-range slider, event overlays, and a
+  downloadable data table.
+- **Forecasts** — the 2025–2027 event-augmented forecast with a pessimistic/base/optimistic
+  scenario band, an optional trend-regression baseline overlay, and a downloadable forecast
+  table.
+- **Inclusion Projections** — progress bars toward the NFIS-II 70% target and a 60% frontier,
+  a scenario selector, the event–indicator association matrix, and written answers to the
+  consortium's key questions.
+
 ## Running Tests
 
 ```bash

@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
-from src.event_impact import combined_event_effect
+from src.event_impact import combined_event_effect, events_for_indicator
 
 
 def fit_trend(years, values, log=False):
@@ -119,6 +119,92 @@ def scenario_forecasts(last_value, last_date, forecast_dates, events, indicator_
         )
         scenarios[name] = df.set_index("date")["forecast"]
     return pd.DataFrame(scenarios)
+
+
+# Single source of truth for the two headline forecasts, reproducing
+# notebooks/04_forecasting.ipynb exactly so the dashboard never shows
+# different numbers than the documented report (reports/forecast_results.md).
+FORECAST_CONFIG = {
+    "ACC_OWNERSHIP": {
+        "last_date": "2024-11-29", "last_value": 49.0,
+        "calibration": 0.25, "background_pp_per_year": 0.0,
+        # ACC_OWNERSHIP's only validated (direct/indirect) driver, Telebirr,
+        # was already fully matured by 2024 -> pessimistic == base (flat).
+        # Optimistic instead asks "what if the *enabling* links Task 3
+        # excluded (Fayda, NFIS-II) finally convert to account-opening?",
+        # at a steeper, explicitly-discounted calibration.
+        "strategy": "enabling_upside",
+        "optimistic_enabling_calibration": 0.15,
+    },
+    "USG_DIGITAL_PAYMENT": {
+        "last_date": "2024-11-29", "last_value": 35.0,
+        "calibration": 0.80, "background_pp_per_year": 0.403,
+        "strategy": "symmetric",
+    },
+}
+
+
+def standard_scenario_forecast(indicator_code, links, forecast_dates,
+                                optimistic_multiplier=1.4, pessimistic_multiplier=0.4,
+                                config=None):
+    """The project's one definition of the Access/Usage scenario forecasts.
+
+    Shared by ``notebooks/04_forecasting.ipynb`` and ``dashboard/app.py`` so
+    the two surfaces present identical numbers. ``links`` must be event-
+    joined impact links (``data_loader.join_impact_links_with_events``).
+
+    Two scenario strategies, per ``FORECAST_CONFIG``:
+
+    - ``"symmetric"``: pessimistic/base/optimistic scale the same validated
+      events' calibration and background rate together (faster/slower
+      realization of the same story).
+    - ``"enabling_upside"``: pessimistic and base trust only validated
+      (direct/indirect) events; optimistic additionally includes `enabling`
+      links at a steep, separately-specified discount, since those were
+      excluded from Task 3's validation and represent a distinct upside
+      story ("preconditions finally pay off"), not just a faster version of
+      the base case.
+    """
+    cfg = (config or FORECAST_CONFIG)[indicator_code]
+    validated_events = events_for_indicator(links, indicator_code)
+    background = max(cfg["background_pp_per_year"], 0.0)
+
+    if cfg["strategy"] == "enabling_upside":
+        pessimistic = event_augmented_forecast(
+            cfg["last_value"], cfg["last_date"], forecast_dates, validated_events,
+            indicator_code, calibration=cfg["calibration"], background_pp_per_year=0.0,
+        )
+        base = event_augmented_forecast(
+            cfg["last_value"], cfg["last_date"], forecast_dates, validated_events,
+            indicator_code, calibration=cfg["calibration"], background_pp_per_year=background,
+        )
+        all_events = events_for_indicator(links, indicator_code, relationship_types=None)
+        validated_ids = {e["record_id"] for e in validated_events}
+        optimistic_events = [
+            {**e, "magnitude": e["magnitude"] * (
+                cfg["calibration"] if e["record_id"] in validated_ids
+                else cfg["optimistic_enabling_calibration"]
+            )}
+            for e in all_events
+        ]
+        optimistic = event_augmented_forecast(
+            cfg["last_value"], cfg["last_date"], forecast_dates, optimistic_events,
+            indicator_code, calibration=1.0, background_pp_per_year=0.0,
+        )
+        out = pd.DataFrame({
+            "date": pessimistic["date"],
+            "pessimistic": pessimistic["forecast"],
+            "base": base["forecast"],
+            "optimistic": optimistic["forecast"],
+        })
+    else:
+        out = scenario_forecasts(
+            cfg["last_value"], cfg["last_date"], forecast_dates, validated_events, indicator_code,
+            base_calibration=cfg["calibration"], base_background_pp_per_year=background,
+            optimistic_multiplier=optimistic_multiplier, pessimistic_multiplier=pessimistic_multiplier,
+        ).reset_index().rename(columns={"index": "date"})
+
+    return out.reset_index(drop=True)
 
 
 def apply_scenario(baseline, event_effects, multiplier=1.0, cap=100.0):
