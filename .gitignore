@@ -37,3 +37,9 @@ Thumbs.db
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local backups
+backup/
+
+# Interim report stays local
+reports/interim_report.*
