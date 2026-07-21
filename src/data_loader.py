@@ -99,14 +99,50 @@ def get_events(df):
 
 
 def get_impact_links(df):
-    """Return impact_link rows joined with their parent event details."""
+    """Return impact_link rows from ``df``, joined to parent events also in ``df``.
+
+    Only useful if impact links and events live in the *same* frame under a
+    shared ``record_type`` column. In this project's data, impact links are
+    published as a separate sheet/file with no ``record_type``/``parent_id``
+    overlap against the main sheet — use ``join_impact_links_with_events``
+    for that (real) two-file shape instead.
+    """
+    if "parent_id" not in df.columns:
+        raise ValueError(
+            "This DataFrame has no 'parent_id' column, so it cannot contain "
+            "impact_link rows joined to events. If you have separate main/"
+            "impact DataFrames (the shape used in this project), call "
+            "join_impact_links_with_events(main, impact) instead."
+        )
     links = df[df["record_type"] == "impact_link"].copy()
     events = df[df["record_type"] == "event"]
-    if "record_id" in events.columns and "parent_id" in links.columns:
-        links = links.merge(
-            events.add_prefix("event_"),
-            left_on="parent_id",
-            right_on="event_record_id",
-            how="left",
-        )
-    return links
+    return links.merge(
+        events.add_prefix("event_"),
+        left_on="parent_id",
+        right_on="event_record_id",
+        how="left",
+    )
+
+
+def join_impact_links_with_events(main, impact):
+    """Join the impact-links sheet to event details from the main sheet.
+
+    This matches the dataset's actual two-file shape: ``main`` holds
+    observations/events/targets, ``impact`` holds impact_link rows with a
+    ``parent_id`` pointing at an event's ``record_id`` in ``main``. Event
+    columns are prefixed with ``event_`` to avoid name collisions (e.g.
+    ``event_indicator`` is the event's name, ``event_observation_date`` its date).
+
+    Raises ``ValueError`` if any ``parent_id`` does not resolve to a known event.
+    """
+    events = main[main["record_type"] == "event"].copy()
+    joined = impact.merge(
+        events.add_prefix("event_"),
+        left_on="parent_id",
+        right_on="event_record_id",
+        how="left",
+    )
+    orphans = joined.loc[joined["event_record_id"].isna(), "parent_id"].unique()
+    if len(orphans):
+        raise ValueError(f"impact links reference unknown events: {sorted(orphans)}")
+    return joined
